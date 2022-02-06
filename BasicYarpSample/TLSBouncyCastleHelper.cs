@@ -23,43 +23,6 @@ using Org.BouncyCastle.OpenSsl;
 
 namespace LeiKaiFeng.X509Certificates
 {
-
-    public sealed class CaPack
-    {
-        private CaPack(X509Certificate certificate, AsymmetricKeyParameter privateKey)
-        {
-            Certificate = certificate;
-            PrivateKey = privateKey;
-        }
-
-        public X509Certificate Certificate { get; }
-
-        public AsymmetricKeyParameter PrivateKey { get; }
-
-        static CaPack CreateCaPack(SX.X509Certificate2 certificate)
-        {
-
-            var cert = DotNetUtilities.FromX509Certificate(certificate);
-
-            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate);
-
-
-            var key = DotNetUtilities.GetRsaKeyPair(pri).Private;
-
-            return new CaPack(cert, key);
-
-        }
-
-
-
-        public static CaPack Create(SX.X509Certificate2 certificate2)
-        {
-            var bytes = certificate2.Export(SX.X509ContentType.Pfx);
-
-            return CreateCaPack(new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable));
-        }
-    }
-
     public static class TLSBouncyCastleHelper
     {
         static readonly SecureRandom Random = new SecureRandom();
@@ -106,7 +69,7 @@ namespace LeiKaiFeng.X509Certificates
         static SX.X509Certificate2 AsForm(X509Certificate certificate,
             AsymmetricCipherKeyPair key, SecureRandom random)
         {
-            const string S = "54646454";
+            const string S = "3f2b9091-3374-4eac-ab5a-37688a5a59eb";
 
             var buffer = AsByteArray(certificate, key, S, random);
 
@@ -178,7 +141,7 @@ namespace LeiKaiFeng.X509Certificates
 
         }
 
-        public static SX.X509Certificate2 GenerateCA(
+        public static CaCert GenerateCA(
             string name,
             int keySize,
             int days)
@@ -213,7 +176,7 @@ namespace LeiKaiFeng.X509Certificates
 
             var x509 = cert.Generate(new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id, key.Private));
 
-            return AsForm(x509, key, Random);
+            return new CaCert(AsForm(x509, key, Random));
 
         }
 
@@ -257,20 +220,27 @@ namespace LeiKaiFeng.X509Certificates
             return cert;
         }
 
-        public static SX.X509Certificate2 GenerateTls(
-            CaPack ca,
+    
+        internal static SX.X509Certificate2 GenerateTls(
+            X509Certificate caCert,
+            AsymmetricKeyParameter caPrivateKey,
             string name,
             int keySize,
             int days,
             string[] subjectNames)
         {
+
+            
+
             var subjectName = new X509Name($"CN={name}");
 
             var subjectKey = GenerateRsaKeyPair(Random, keySize);
 
+
+
             var certGen = GenerateTls(
-                ca.Certificate.IssuerDN,
-                ca.Certificate.GetPublicKey(),
+                caCert.IssuerDN,
+                caCert.GetPublicKey(),
                 subjectName,
                 subjectKey.Public,
                 days,
@@ -278,7 +248,7 @@ namespace LeiKaiFeng.X509Certificates
 
             var x509 = certGen.Generate(new Asn1SignatureFactory(
                 PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id,
-                ca.PrivateKey));
+                caPrivateKey));
 
 
 
@@ -291,39 +261,124 @@ namespace LeiKaiFeng.X509Certificates
 
 
 
-        public static class CreatePem
+        
+    }
+
+
+    public sealed class CreateTls
+    {
+        readonly X509Certificate _cert;
+
+        readonly AsymmetricKeyParameter _privateKey;
+
+
+        static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
         {
-
-            static byte[] As(object obj)
-            {
-                MemoryStream memoryStream = new MemoryStream();
-                using (TextWriter tw = new StreamWriter(memoryStream, System.Text.Encoding.ASCII))
-                {
-                    PemWriter pw = new PemWriter(tw);
-
-                    pw.WriteObject(obj);
-
-                    tw.Flush();
-                }
-
-                return memoryStream.ToArray();
-            }
-
-            public static byte[] AsPem(SX.X509Certificate2 certificate2)
-            {
-                return As(DotNetUtilities.FromX509Certificate(certificate2));
-            }
-
-            public static byte[] AsKey(SX.X509Certificate2 certificate2)
-            {
-                var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
-
-
-
-                var keyPair = DotNetUtilities.GetRsaKeyPair(pri).Private;
-
-                return As(keyPair);
-            }
+            return DotNetUtilities.FromX509Certificate(certificate2);
         }
-    }  
+
+        static AsymmetricKeyParameter AsBouncyCastleKey(SX.X509Certificate2 certificate2)
+        {
+            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
+
+            return DotNetUtilities.GetRsaKeyPair(pri).Private;
+        }
+
+
+
+        internal CreateTls(SX.X509Certificate2 certificate2)
+        {
+            _cert = AsBouncyCastleCert(certificate2);
+
+            _privateKey = AsBouncyCastleKey(certificate2);
+
+        }
+
+
+
+        public SX.X509Certificate2 Create(
+            string name,
+            int keySize,
+            int days,
+            string[] subjectNames)
+        {
+            return TLSBouncyCastleHelper.GenerateTls(_cert, _privateKey, name, keySize, days, subjectNames);
+        }
+    }
+
+    public sealed class CaCert
+    {
+        readonly SX.X509Certificate2 _cert;
+
+        internal CaCert(SX.X509Certificate2 cert)
+        {
+            _cert = cert;
+        }
+
+
+        public static CaCert CreateFromFile(string path)
+        {
+            var bytes = File.ReadAllBytes(path);
+
+            return new CaCert(new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable));
+        }
+
+        public SX.X509Certificate2 X509Certificate2()
+        {
+            var bytes = _cert.Export(SX.X509ContentType.Pfx);
+
+
+            return new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable);
+        }
+
+
+        public CreateTls CreateTls()
+        {
+            return new CreateTls(this.X509Certificate2());
+        }
+
+        public void SavePfx(string path)
+        {
+            var bytes = _cert.Export(SX.X509ContentType.Pfx);
+
+            File.WriteAllBytes(path, bytes);
+
+
+        }
+    }
+
+    public static class CreatePemExtensions
+    {
+
+        static byte[] As(object obj)
+        {
+            MemoryStream memoryStream = new MemoryStream();
+            using (TextWriter tw = new StreamWriter(memoryStream, System.Text.Encoding.ASCII))
+            {
+                PemWriter pw = new PemWriter(tw);
+
+                pw.WriteObject(obj);
+
+                tw.Flush();
+            }
+
+            return memoryStream.ToArray();
+        }
+
+        public static byte[] AsPemCert(this SX.X509Certificate2 certificate2)
+        {
+            return As(DotNetUtilities.FromX509Certificate(certificate2));
+        }
+
+        public static byte[] AsPemKey(this SX.X509Certificate2 certificate2)
+        {
+            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
+
+
+
+            var keyPair = DotNetUtilities.GetRsaKeyPair(pri).Private;
+
+            return As(keyPair);
+        }
+    }
 }
