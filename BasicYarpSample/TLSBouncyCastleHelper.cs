@@ -96,7 +96,7 @@ namespace LeiKaiFeng.X509Certificates
         //设置是否是CA证书
         static void SetBasicConstraints(X509V3CertificateGenerator generator, bool ca)
         {
-            generator.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(ca));
+            generator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(ca));
         }
 
         static void SetSubjectAlternativeNames(X509V3CertificateGenerator generator, string[] names)
