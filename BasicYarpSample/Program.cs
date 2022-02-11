@@ -21,10 +21,12 @@ namespace BasicYARPSample
             // Create a Kestrel web server, and tell it to use the Startup class
             // for the service configuration
 
-            var ca = CaCert.CreateFromFile("ca.pfx").CreateTls();
+            var ca = Cert.CreateFromFile("ca.pfx");
+
+            var tlsHelper = new TLSHelper();
 
             var myHostBuilder = Host.CreateDefaultBuilder(args);
-  
+                
             
             myHostBuilder.ConfigureWebHostDefaults(webHostBuilder =>
             {
@@ -41,7 +43,8 @@ namespace BasicYARPSample
                             {
                                 var sni = name ?? "baidu.com";
 
-                                var tlsCert = ca.Create(
+                                var tlsCert = tlsHelper.CreateTlsCert(
+                                      ca,
                                       "iwara.tv",
                                       2048,
                                       30000,

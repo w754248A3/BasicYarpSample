@@ -23,17 +23,18 @@ using Org.BouncyCastle.OpenSsl;
 
 namespace LeiKaiFeng.X509Certificates
 {
-    public static class TLSBouncyCastleHelper
+    public sealed class TLSHelper
     {
-        static readonly SecureRandom Random = new SecureRandom();
+        private readonly SecureRandom _secureRandom = new SecureRandom();
 
+        //生成证书的序列号，随机生成
         static BigInteger GenerateSerialNumber(SecureRandom random)
         {
             return BigIntegers.CreateRandomInRange(
-                    BigInteger.One, BigInteger.ValueOf(Int64.MaxValue), random);
+                    BigInteger.One, BigInteger.ValueOf(long.MaxValue), random);
         }
 
-
+        //生成RSA参数
         static AsymmetricCipherKeyPair GenerateRsaKeyPair(SecureRandom random, int keySize)
         {
             var key = new RsaKeyPairGenerator();
@@ -43,7 +44,7 @@ namespace LeiKaiFeng.X509Certificates
             return key.GenerateKeyPair();
         }
 
-        static byte[] AsByteArray(X509Certificate certificate, AsymmetricCipherKeyPair key,
+        static byte[] AsByteArray(X509Certificate certificate, AsymmetricKeyParameter privateKey,
             string password, SecureRandom random)
         {
 
@@ -55,7 +56,7 @@ namespace LeiKaiFeng.X509Certificates
 
             store.SetCertificateEntry(friendlyName, certificateEntry);
 
-            store.SetKeyEntry(friendlyName, new AsymmetricKeyEntry(key.Private), new[] { certificateEntry });
+            store.SetKeyEntry(friendlyName, new AsymmetricKeyEntry(privateKey), new[] { certificateEntry });
 
             var stream = new MemoryStream();
 
@@ -66,24 +67,33 @@ namespace LeiKaiFeng.X509Certificates
             return stream.ToArray();
         }
 
-        static SX.X509Certificate2 AsForm(X509Certificate certificate,
-            AsymmetricCipherKeyPair key, SecureRandom random)
+        public SX.X509Certificate2 AsForm(X509Certificate certificate,
+            AsymmetricKeyParameter privateKey)
         {
-            const string S = "3f2b9091-3374-4eac-ab5a-37688a5a59eb";
+            return AsForm(certificate, privateKey, _secureRandom);
+        }
 
-            var buffer = AsByteArray(certificate, key, S, random);
+        static SX.X509Certificate2 AsForm(X509Certificate certificate,
+            AsymmetricKeyParameter privateKey, SecureRandom random)
+        {
+            const string PASSWORD = "3f2b9091-3374-4eac-ab5a-37688a5a59eb";
+
+            var buffer = AsByteArray(certificate, privateKey, PASSWORD, random);
 
 
-            return new SX.X509Certificate2(buffer, S, SX.X509KeyStorageFlags.Exportable);
+            return new SX.X509Certificate2(buffer, PASSWORD, SX.X509KeyStorageFlags.Exportable);
         }
 
 
         static void SetDateTime(X509V3CertificateGenerator generator, int days)
         {
-            generator.SetNotBefore(DateTime.UtcNow);
-            generator.SetNotAfter(DateTime.UtcNow.AddDays(days));
+            var dt = DateTime.UtcNow;
+
+            generator.SetNotBefore(dt);
+            generator.SetNotAfter(dt.AddDays(days));
         }
 
+        //设置是否是CA证书
         static void SetBasicConstraints(X509V3CertificateGenerator generator, bool ca)
         {
             generator.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(ca));
@@ -101,6 +111,7 @@ namespace LeiKaiFeng.X509Certificates
 
         }
 
+        //证书的扩展使用方法，只能用于服务器验证
         static void SetExtendedKeyUsage(X509V3CertificateGenerator generator)
         {
             var usages = new[] { KeyPurposeID.IdKPServerAuth };
@@ -110,9 +121,10 @@ namespace LeiKaiFeng.X509Certificates
                 new ExtendedKeyUsage(usages));
         }
 
+        //设置密钥标识符
         static void SetuthorityKeyIdentifier(X509V3CertificateGenerator generator, AsymmetricKeyParameter issuerPublic)
         {
-            //Authority Key Identifier
+           
             var authorityKeyIdentifier = new AuthorityKeyIdentifierStructure(issuerPublic);
             generator.AddExtension(
                 X509Extensions.AuthorityKeyIdentifier, false, authorityKeyIdentifier);
@@ -120,16 +132,19 @@ namespace LeiKaiFeng.X509Certificates
 
         }
 
+        //设置CA的Key使用约束
         static void SetKeyUsageCA(X509V3CertificateGenerator generator)
         {
             generator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.KeyCertSign));
         }
 
+        //设置TLS证书的Key使用约束
         static void SetKeyUsageTls(X509V3CertificateGenerator generator)
         {
             generator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.DigitalSignature));
         }
 
+        //主题密钥标识符
         static void SetSubjectPublicKey(X509V3CertificateGenerator generator, AsymmetricKeyParameter subjectPublic)
         {
             //Subject Key Identifier
@@ -141,112 +156,123 @@ namespace LeiKaiFeng.X509Certificates
 
         }
 
-        public static CaCert GenerateCA(
-            string name,
-            int keySize,
-            int days)
+
+        public Cert CreateCaCert(string name, int keySize, int days)
         {
-            var key = GenerateRsaKeyPair(Random, keySize);
-
-            var cert = new X509V3CertificateGenerator();
-
-            var subject = new X509Name($"CN={name}");
-
-            
-
-            cert.SetIssuerDN(subject);
-
-            cert.SetSubjectDN(subject);
-
-            cert.SetSerialNumber(GenerateSerialNumber(Random));
-
-            SetDateTime(cert, days);
-
-            cert.SetPublicKey(key.Public);
-
-            SetKeyUsageCA(cert);
-
-            SetBasicConstraints(cert, true);
-
-            SetExtendedKeyUsage(cert);
-
-            SetuthorityKeyIdentifier(cert, key.Public);
-
-            SetSubjectPublicKey(cert, key.Public);
-
-            var x509 = cert.Generate(new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id, key.Private));
-
-            return new CaCert(AsForm(x509, key, Random));
-
+            return CreateCaCert(name, keySize, days, _secureRandom);
         }
 
+        static Cert CreateCaCert(string name, int keySize, int days, SecureRandom secureRandom)
+        {
+            var key = GenerateRsaKeyPair(secureRandom, keySize);
+
+            var gen = new X509V3CertificateGenerator();
+
+            var subject = new X509Name("CN=" + name);
+
+            gen.SetIssuerDN(subject);
+
+            gen.SetSubjectDN(subject);
+
+            gen.SetSerialNumber(GenerateSerialNumber(secureRandom));
+
+            SetDateTime(gen, days);
+
+            gen.SetPublicKey(key.Public);
+
+            SetKeyUsageCA(gen);
+
+            SetBasicConstraints(gen, true);
+
+            SetExtendedKeyUsage(gen);
+
+            SetuthorityKeyIdentifier(gen, key.Public);
+
+            SetSubjectPublicKey(gen, key.Public);
+
+            var cert = gen.Generate(new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id, key.Private));
+
+            return new Cert(AsForm(cert, key.Private, secureRandom));
+        }
+      
+
+      
 
 
-
-        static X509V3CertificateGenerator GenerateTls(
+        static X509V3CertificateGenerator CreateTlsCertRequest(
             X509Name issuerName,
             AsymmetricKeyParameter issuerPublicKey,
             X509Name subjectName,
             AsymmetricKeyParameter subjectPublicKey,
             int days,
-            string[] subjectNames
-            )
+            string[] subjectNames,
+            SecureRandom secureRandom)
         {
-            var cert = new X509V3CertificateGenerator();
+            var gen = new X509V3CertificateGenerator();
 
-            cert.SetIssuerDN(issuerName);
+            gen.SetIssuerDN(issuerName);
 
-            cert.SetSubjectDN(subjectName);
+            gen.SetSubjectDN(subjectName);
 
-            cert.SetSerialNumber(GenerateSerialNumber(Random));
+            gen.SetSerialNumber(GenerateSerialNumber(secureRandom));
 
-            SetDateTime(cert, days);
+            SetDateTime(gen, days);
 
-            cert.SetPublicKey(subjectPublicKey);
+            gen.SetPublicKey(subjectPublicKey);
 
-            SetBasicConstraints(cert, false);
+            SetBasicConstraints(gen, false);
 
-            SetExtendedKeyUsage(cert);
+            SetExtendedKeyUsage(gen);
             
-            SetuthorityKeyIdentifier(cert, issuerPublicKey);
+            SetuthorityKeyIdentifier(gen, issuerPublicKey);
 
-            SetKeyUsageTls(cert);
+            SetKeyUsageTls(gen);
 
-            SetSubjectPublicKey(cert, subjectPublicKey);
+            SetSubjectPublicKey(gen, subjectPublicKey);
 
-            SetSubjectAlternativeNames(cert, subjectNames);
+            SetSubjectAlternativeNames(gen, subjectNames);
 
-
-            return cert;
+            return gen;
         }
 
     
-        internal static SX.X509Certificate2 GenerateTls(
-            X509Certificate caCert,
-            AsymmetricKeyParameter caPrivateKey,
+        public SX.X509Certificate2 CreateTlsCert(Cert cert,
             string name,
             int keySize,
             int days,
             string[] subjectNames)
         {
+            return CreateTlsCert(cert.X509Cert, cert.PrivateKey, name, keySize, days, subjectNames, _secureRandom);
+        }
 
-            
+        static SX.X509Certificate2 CreateTlsCert(
+            X509Certificate caCert,
+            AsymmetricKeyParameter caPrivateKey,
+            string name,
+            int keySize,
+            int days,
+            string[] subjectNames,
+            SecureRandom secureRandom)
+        {
 
-            var subjectName = new X509Name($"CN={name}");
-
-            var subjectKey = GenerateRsaKeyPair(Random, keySize);
 
 
+            var subjectName = new X509Name($"CN=" + name);
 
-            var certGen = GenerateTls(
+            var subjectKey = GenerateRsaKeyPair(secureRandom, keySize);
+
+
+
+            var certGen = CreateTlsCertRequest(
                 caCert.IssuerDN,
                 caCert.GetPublicKey(),
                 subjectName,
                 subjectKey.Public,
                 days,
-                subjectNames);
+                subjectNames,
+                secureRandom);
 
-            var x509 = certGen.Generate(new Asn1SignatureFactory(
+            var cert = certGen.Generate(new Asn1SignatureFactory(
                 PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id,
                 caPrivateKey));
 
@@ -254,7 +280,7 @@ namespace LeiKaiFeng.X509Certificates
 
 
 
-            return AsForm(x509, subjectKey, Random);
+            return AsForm(cert, subjectKey.Private, secureRandom);
 
         }
 
@@ -265,11 +291,19 @@ namespace LeiKaiFeng.X509Certificates
     }
 
 
-    public sealed class CreateTls
+   
+    public sealed class Cert
     {
-        readonly X509Certificate _cert;
+        internal X509Certificate X509Cert { get; }
 
-        readonly AsymmetricKeyParameter _privateKey;
+        internal AsymmetricKeyParameter PrivateKey { get; }
+
+        internal Cert(SX.X509Certificate2 cert)
+        {
+            X509Cert = AsBouncyCastleCert(cert);
+
+            PrivateKey = AsBouncyCastleKey(cert);
+        }
 
 
         static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
@@ -286,66 +320,19 @@ namespace LeiKaiFeng.X509Certificates
 
 
 
-        internal CreateTls(SX.X509Certificate2 certificate2)
-        {
-            _cert = AsBouncyCastleCert(certificate2);
-
-            _privateKey = AsBouncyCastleKey(certificate2);
-
-        }
-
-
-
-        public SX.X509Certificate2 Create(
-            string name,
-            int keySize,
-            int days,
-            string[] subjectNames)
-        {
-            return TLSBouncyCastleHelper.GenerateTls(_cert, _privateKey, name, keySize, days, subjectNames);
-        }
-    }
-
-    public sealed class CaCert
-    {
-        readonly SX.X509Certificate2 _cert;
-
-        internal CaCert(SX.X509Certificate2 cert)
-        {
-            _cert = cert;
-        }
-
-
-        public static CaCert CreateFromFile(string path)
+        public static Cert CreateFromFile(string path)
         {
             var bytes = File.ReadAllBytes(path);
 
-            return new CaCert(new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable));
+            return new Cert(new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable));
         }
 
-        public SX.X509Certificate2 X509Certificate2()
+        public SX.X509Certificate2 X509Certificate2(TLSHelper tlsHelper)
         {
-            var bytes = _cert.Export(SX.X509ContentType.Pfx);
-
-
-            return new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable);
-        }
-
-
-        public CreateTls CreateTls()
-        {
-            return new CreateTls(this.X509Certificate2());
-        }
-
-        public void SavePfx(string path)
-        {
-            var bytes = _cert.Export(SX.X509ContentType.Pfx);
-
-            File.WriteAllBytes(path, bytes);
-
-
+            return tlsHelper.AsForm(X509Cert, PrivateKey);
         }
     }
+
 
     public static class CreatePemExtensions
     {
