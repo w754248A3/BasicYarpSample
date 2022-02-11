@@ -25,7 +25,53 @@ namespace LeiKaiFeng.X509Certificates
 {
     public sealed class TLSHelper
     {
-        private readonly SecureRandom _secureRandom = new SecureRandom();
+        private readonly SecureRandom _secureRandom;
+
+        public TLSHelper(SecureRandom secureRandom, X509Certificate x509Cert, AsymmetricKeyParameter privateKey)
+        {
+            _secureRandom = secureRandom;
+            X509Cert = x509Cert;
+            PrivateKey = privateKey;
+        }
+
+        X509Certificate X509Cert { get; }
+
+        AsymmetricKeyParameter PrivateKey { get; }
+
+      
+
+
+        static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
+        {
+            return DotNetUtilities.FromX509Certificate(certificate2);
+        }
+
+        static AsymmetricKeyParameter AsBouncyCastleKey(SX.X509Certificate2 certificate2)
+        {
+            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
+
+            return DotNetUtilities.GetRsaKeyPair(pri).Private;
+        }
+
+
+
+        public static TLSHelper CreateFromFile(string path)
+        {
+            var bytes = File.ReadAllBytes(path);
+
+            var x5092 = new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable);
+
+            var cert = AsBouncyCastleCert(x5092);
+            var key = AsBouncyCastleKey(x5092);
+
+
+            return new TLSHelper(new SecureRandom(), cert, key);
+        }
+
+        public SX.X509Certificate2 X509Certificate2(TLSHelper tlsHelper)
+        {
+            return tlsHelper.AsForm(X509Cert, PrivateKey);
+        }
 
         //生成证书的序列号，随机生成
         static BigInteger GenerateSerialNumber(SecureRandom random)
@@ -157,12 +203,12 @@ namespace LeiKaiFeng.X509Certificates
         }
 
 
-        public Cert CreateCaCert(string name, int keySize, int days)
+        public static TLSHelper CreateCaCert(string name, int keySize, int days)
         {
-            return CreateCaCert(name, keySize, days, _secureRandom);
+            return CreateCaCert(name, keySize, days, new SecureRandom());
         }
 
-        static Cert CreateCaCert(string name, int keySize, int days, SecureRandom secureRandom)
+        static TLSHelper CreateCaCert(string name, int keySize, int days, SecureRandom secureRandom)
         {
             var key = GenerateRsaKeyPair(secureRandom, keySize);
 
@@ -192,7 +238,8 @@ namespace LeiKaiFeng.X509Certificates
 
             var cert = gen.Generate(new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.Id, key.Private));
 
-            return new Cert(AsForm(cert, key.Private, secureRandom));
+
+            return new TLSHelper(secureRandom, cert, key.Private);
         }
       
 
@@ -236,13 +283,13 @@ namespace LeiKaiFeng.X509Certificates
         }
 
     
-        public SX.X509Certificate2 CreateTlsCert(Cert cert,
+        public SX.X509Certificate2 CreateTlsCert(
             string name,
             int keySize,
             int days,
             string[] subjectNames)
         {
-            return CreateTlsCert(cert.X509Cert, cert.PrivateKey, name, keySize, days, subjectNames, _secureRandom);
+            return CreateTlsCert(X509Cert, PrivateKey, name, keySize, days, subjectNames, _secureRandom);
         }
 
         static SX.X509Certificate2 CreateTlsCert(
@@ -292,47 +339,6 @@ namespace LeiKaiFeng.X509Certificates
 
 
    
-    public sealed class Cert
-    {
-        internal X509Certificate X509Cert { get; }
-
-        internal AsymmetricKeyParameter PrivateKey { get; }
-
-        internal Cert(SX.X509Certificate2 cert)
-        {
-            X509Cert = AsBouncyCastleCert(cert);
-
-            PrivateKey = AsBouncyCastleKey(cert);
-        }
-
-
-        static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
-        {
-            return DotNetUtilities.FromX509Certificate(certificate2);
-        }
-
-        static AsymmetricKeyParameter AsBouncyCastleKey(SX.X509Certificate2 certificate2)
-        {
-            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
-
-            return DotNetUtilities.GetRsaKeyPair(pri).Private;
-        }
-
-
-
-        public static Cert CreateFromFile(string path)
-        {
-            var bytes = File.ReadAllBytes(path);
-
-            return new Cert(new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable));
-        }
-
-        public SX.X509Certificate2 X509Certificate2(TLSHelper tlsHelper)
-        {
-            return tlsHelper.AsForm(X509Cert, PrivateKey);
-        }
-    }
-
 
     public static class CreatePemExtensions
     {
