@@ -21,7 +21,7 @@ namespace BasicYARPSample
             // Create a Kestrel web server, and tell it to use the Startup class
             // for the service configuration
 
-            var tls = TLSHelper.CreateFromFile("ca.pfx");
+            var tls = TLSHelper.OpenCaCertFromFile("ca.pfx");
 
             
 

@@ -25,20 +25,22 @@ namespace LeiKaiFeng.X509Certificates
 {
     public sealed class TLSHelper
     {
-        private readonly SecureRandom _secureRandom;
+      
+        SecureRandom SecureRandom { get; }
 
-        public TLSHelper(SecureRandom secureRandom, X509Certificate x509Cert, AsymmetricKeyParameter privateKey)
-        {
-            _secureRandom = secureRandom;
-            X509Cert = x509Cert;
-            PrivateKey = privateKey;
-        }
-
-        X509Certificate X509Cert { get; }
+        X509Certificate CaCert { get; }
 
         AsymmetricKeyParameter PrivateKey { get; }
 
-      
+
+        private TLSHelper(SecureRandom secureRandom, X509Certificate caCert, AsymmetricKeyParameter privateKey)
+        {
+            SecureRandom = secureRandom;
+            CaCert = caCert;
+            PrivateKey = privateKey;
+        }
+
+
 
 
         static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
@@ -55,22 +57,23 @@ namespace LeiKaiFeng.X509Certificates
 
 
 
-        public static TLSHelper CreateFromFile(string path)
+        public static TLSHelper OpenCaCertFromFile(string path)
         {
             var bytes = File.ReadAllBytes(path);
 
             var x5092 = new SX.X509Certificate2(bytes, string.Empty, SX.X509KeyStorageFlags.Exportable);
 
             var cert = AsBouncyCastleCert(x5092);
+           
             var key = AsBouncyCastleKey(x5092);
 
 
             return new TLSHelper(new SecureRandom(), cert, key);
         }
 
-        public SX.X509Certificate2 X509Certificate2(TLSHelper tlsHelper)
+        public SX.X509Certificate2 AsToX509Certificate2()
         {
-            return tlsHelper.AsForm(X509Cert, PrivateKey);
+            return AsForm(CaCert, PrivateKey, SecureRandom);
         }
 
         //生成证书的序列号，随机生成
@@ -90,7 +93,7 @@ namespace LeiKaiFeng.X509Certificates
             return key.GenerateKeyPair();
         }
 
-        static byte[] AsByteArray(X509Certificate certificate, AsymmetricKeyParameter privateKey,
+        static ReadOnlySpan<byte> AsByteArray(X509Certificate certificate, AsymmetricKeyParameter privateKey,
             string password, SecureRandom random)
         {
 
@@ -108,17 +111,12 @@ namespace LeiKaiFeng.X509Certificates
 
             store.Save(stream, password.ToCharArray(), random);
             
-            stream.Position = 0;
-            
-            return stream.ToArray();
+            //stream.Position = 0;
+
+            return stream.GetBuffer().AsSpan(0, checked((int)stream.Length));
         }
 
-        public SX.X509Certificate2 AsForm(X509Certificate certificate,
-            AsymmetricKeyParameter privateKey)
-        {
-            return AsForm(certificate, privateKey, _secureRandom);
-        }
-
+     
         static SX.X509Certificate2 AsForm(X509Certificate certificate,
             AsymmetricKeyParameter privateKey, SecureRandom random)
         {
@@ -145,6 +143,7 @@ namespace LeiKaiFeng.X509Certificates
             generator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(ca));
         }
 
+        //设置DNS域名
         static void SetSubjectAlternativeNames(X509V3CertificateGenerator generator, string[] names)
         {
             var subjectAlternativeNames =
@@ -289,7 +288,7 @@ namespace LeiKaiFeng.X509Certificates
             int days,
             string[] subjectNames)
         {
-            return CreateTlsCert(X509Cert, PrivateKey, name, keySize, days, subjectNames, _secureRandom);
+            return CreateTlsCert(CaCert, PrivateKey, name, keySize, days, subjectNames, SecureRandom);
         }
 
         static SX.X509Certificate2 CreateTlsCert(
