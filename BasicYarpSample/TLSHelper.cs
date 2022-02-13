@@ -43,12 +43,12 @@ namespace LeiKaiFeng.X509Certificates
 
 
 
-        static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
+        internal static X509Certificate AsBouncyCastleCert(SX.X509Certificate2 certificate2)
         {
             return DotNetUtilities.FromX509Certificate(certificate2);
         }
 
-        static AsymmetricKeyParameter AsBouncyCastleKey(SX.X509Certificate2 certificate2)
+        internal static AsymmetricKeyParameter AsBouncyCastleKey(SX.X509Certificate2 certificate2)
         {
             var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
 
@@ -120,7 +120,7 @@ namespace LeiKaiFeng.X509Certificates
         static SX.X509Certificate2 AsForm(X509Certificate certificate,
             AsymmetricKeyParameter privateKey, SecureRandom random)
         {
-            const string PASSWORD = "3f2b9091-3374-4eac-ab5a-37688a5a59eb";
+            const string PASSWORD = "";
 
             var buffer = AsByteArray(certificate, privateKey, PASSWORD, random);
 
@@ -359,18 +359,12 @@ namespace LeiKaiFeng.X509Certificates
 
         public static byte[] AsPemCert(this SX.X509Certificate2 certificate2)
         {
-            return As(DotNetUtilities.FromX509Certificate(certificate2));
+            return As(TLSHelper.AsBouncyCastleCert(certificate2));
         }
 
         public static byte[] AsPemKey(this SX.X509Certificate2 certificate2)
         {
-            var pri = SX.RSACertificateExtensions.GetRSAPrivateKey(certificate2);
-
-
-
-            var keyPair = DotNetUtilities.GetRsaKeyPair(pri).Private;
-
-            return As(keyPair);
+            return As(TLSHelper.AsBouncyCastleKey(certificate2));
         }
     }
 }
