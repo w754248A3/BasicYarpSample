@@ -23,7 +23,6 @@ namespace BasicYARPSample
 
             var tls = TLSHelper.OpenCaCertFromFile("ca.pfx");
 
-            
 
             var myHostBuilder = Host.CreateDefaultBuilder(args);
                 
