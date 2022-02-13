@@ -21,8 +21,12 @@ namespace BasicYARPSample
             // Create a Kestrel web server, and tell it to use the Startup class
             // for the service configuration
 
-            var tls = TLSHelper.OpenCaCertFromFile("ca.pfx");
+            var tls = TLSHelper.CreateCaCert("LEIKAIFENG CA ROOT", 2048, 300);
 
+
+            var ca = tls.AsToX509Certificate2().AsPemCert();
+
+            File.WriteAllBytes("ca.pem", ca);
 
             var myHostBuilder = Host.CreateDefaultBuilder(args);
                 
