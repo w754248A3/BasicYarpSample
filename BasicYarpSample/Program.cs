@@ -20,6 +20,11 @@ using Microsoft.AspNetCore.Http;
 using System.Net.Http;
 using Yarp.ReverseProxy.Forwarder;
 using System.Net;
+using System.Threading;
+using System.IO.Compression;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 
 namespace BasicYARPSample
 {
@@ -123,6 +128,13 @@ namespace BasicYARPSample
 
         }
 
+        static string GetCAPFXPath()
+        {
+            var path = AppDomain.CurrentDomain.BaseDirectory;
+
+            return Path.Combine(path, "ca.pfx");
+        }
+
         static string GetCAPemPath()
         {
             var path = AppDomain.CurrentDomain.BaseDirectory;
@@ -140,7 +152,7 @@ namespace BasicYARPSample
         {
             var info = new ProcessStartInfo();
 
-            var vs = new string[] { "-profile", "\"" + userPath + "\"", "-start-debugger-server" };
+            var vs = new string[] { "-profile", "\"" + userPath + "\""};
 
 
 
@@ -154,18 +166,50 @@ namespace BasicYARPSample
 
         }
 
+        static TLSHelper CreateTLSHelper(string capem)
+        {
+
+            var capfx = GetCAPFXPath();
+
+            if (File.Exists(capfx))
+            {
+                return TLSHelper.OpenCaCertFromFile(capfx);
+            }
+            else
+            {
+                var tls = TLSHelper.CreateCaCert("LEIKAIFENG CA ROOT", 2048, 300);
+
+                var x5092 = tls.AsToX509Certificate2();
+
+                File.WriteAllBytes(capfx, x5092.Export(X509ContentType.Pfx));
+
+                File.WriteAllBytes(capem, x5092.AsPemCert());
+
+                return tls;
+            }
+        }
+
+
         public static void Main(string[] args)
         {
-            var tls = TLSHelper.CreateCaCert("LEIKAIFENG CA ROOT", 2048, 300);
+            var createdNew = false;
+
+            var mx = new Mutex(true, "{4EF719CA-CFF8-4185-BCC5-5DF1B4EFA29F}", out createdNew);
+
+            if (!createdNew)
+            {
 
 
-            var ca = tls.AsToX509Certificate2().AsPemCert();
+                RunFirefox(GetFirefoxAppPath(), GetFirefoxUserFile());
+
+                return;
+            }
 
             var capem = GetCAPemPath();
 
-            File.WriteAllBytes(capem, ca);
+            var tls = CreateTLSHelper(capem);
 
-            
+
             CreateFirefoxPoliciesJsonFile(capem, GetFirefoxPath());
 
             CreateUserInfoFile(GetFirefoxUserFile());
@@ -176,6 +220,8 @@ namespace BasicYARPSample
             RunFirefox(GetFirefoxAppPath(), GetFirefoxUserFile());
 
             RunAsp(args, tls);
+
+            
         }
 
 
@@ -184,7 +230,10 @@ namespace BasicYARPSample
             // Create a Kestrel web server, and tell it to use the Startup class
             // for the service configuration
 
-            
+
+
+            var dic = new ConcurrentDictionary<string, X509Certificate2>();
+
 
             var myHostBuilder = Host.CreateDefaultBuilder(args);
 
@@ -204,14 +253,19 @@ namespace BasicYARPSample
                             {
                                 var sni = name ?? "baidu.com";
 
-                                var tlsCert = tls.CreateTlsCert(
-                                      "iwara.tv",
-                                      2048,
-                                      30000,
-                                      new string[] { sni });
+                                return dic.GetOrAdd(sni, (sni) =>
+                                {
+                                    var tlsCert = tls.CreateTlsCert(
+                                           Regex.Replace(name, @"[^A-Za-z0-9]", ""),
+                                           2048,
+                                           30000,
+                                           new string[] { sni });
+
+                                    return tlsCert;
+                                });
 
 
-                                return tlsCert;
+
                             };
 
                         });
@@ -226,26 +280,124 @@ namespace BasicYARPSample
     }
 
 
-    /// <summary>
-    /// ASP.NET Core pipeline initialization showing how to use IHttpForwarder to directly handle forwarding requests.
-    /// With this approach you are responsible for destination discovery, load balancing, and related concerns.
-    /// </summary>
+    sealed class SaveFileStream : Stream
+    {
+        readonly Stream _readStream;
+
+        readonly Stream _saveStream;
+
+        public SaveFileStream(Stream saveStream, Stream readStream)
+        {
+            _readStream = readStream;
+
+            _saveStream = saveStream;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+           
+            await _readStream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+
+            await _saveStream.WriteAsync(buffer, CancellationToken.None).ConfigureAwait(false);
+ 
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Console.WriteLine("ReadAsync run");
+
+            throw new NotImplementedException();
+        }
+
+        public override Task FlushAsync(CancellationToken cancellationToken)
+        {
+            Console.WriteLine("FlushAsync run");
+
+            return Task.CompletedTask;
+        }
+
+
+        public override void Flush()
+        {
+            Console.WriteLine("Flush run");
+
+          
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            Console.WriteLine("Dispose run");
+
+            _saveStream.Close();
+
+        }
+
+        public override ValueTask DisposeAsync()
+        {
+            Console.WriteLine("DisposeAsync run");
+            return default;
+        }
+
+        public override bool CanTimeout => base.CanTimeout;
+
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => throw new NotImplementedException();
+
+        public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+
+      
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void SetLength(long value)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            throw new NotImplementedException();
+        }
+
+    }
+
+
+
+   
     public class Startup
     {
-        /// <summary>
-        /// This method gets called by the runtime. Use this method to add services to the container.
-        /// </summary>
+
+        readonly IConfiguration _configuration;
+
+        public Startup(IConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
+
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddHttpForwarder();
+
+           
         }
 
-        /// <summary>
-        /// This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        /// </summary>
+       
         public void Configure(IApplicationBuilder app, IHttpForwarder forwarder)
         {
-            // Configure our own HttpMessageInvoker for outbound calls for proxy operations
+           
             var httpClient = new HttpMessageInvoker(new SocketsHttpHandler()
             {
                 UseProxy = false,
@@ -254,22 +406,32 @@ namespace BasicYARPSample
                 UseCookies = false
             });
 
-            // Setup our own request transform class
-            var transformer = new CustomTransformer(); // or HttpTransformer.Default;
+           
+            var transformer = new CustomTransformer(); 
             var requestOptions = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(100) };
 
+            var path = _configuration["StartPath"];
+            Console.WriteLine(path);
             app.UseRouting();
+
+            app.UseWhen(con =>
+            {
+                Console.WriteLine($"AAAAAAAAAAAAAAAAAAAA{con.Request.Path}");
+
+                return con.Request.Path.StartsWithSegments(path, StringComparison.OrdinalIgnoreCase);
+
+            }, F记录内容);
+
+            
+
             app.UseEndpoints(endpoints =>
             {
-                
-                // When using IHttpForwarder for direct forwarding you are responsible for routing, destination discovery, load balancing, affinity, etc..
-                // For an alternate example that includes those features see BasicYarpSample.
                 endpoints.Map("/{**catch-all}", async httpContext =>
                 {
-                    Console.WriteLine($"map run{httpContext.Request.Host} {httpContext.Request.Path} {httpContext.Request.QueryString}");
+                    //Console.WriteLine($"map run{httpContext.Request.Host} {httpContext.Request.Path} {httpContext.Request.QueryString}");
 
                     var error = await forwarder.SendAsync(httpContext, httpContext.Request.Scheme + "://"+ httpContext.Request.Host, httpClient, requestOptions, transformer);
-                    // Check if the proxy operation was successful
+                  
                     if (error != ForwarderError.None)
                     {
                         var errorFeature = httpContext.Features.Get<IForwarderErrorFeature>();
@@ -279,35 +441,87 @@ namespace BasicYARPSample
             });
         }
 
-        /// <summary>
-        /// Custom request transformation
-        /// </summary>
+        static Stream Create解压缩流(Stream stream, HttpResponse response)
+        {
+
+
+            var ce = response.Headers["Content-Encoding"];
+
+            if (ce == "gzip")
+            {
+                return new GZipStream(stream, CompressionMode.Decompress);
+            }
+            else if(ce == "deflate")
+            {
+                return new DeflateStream(stream, CompressionMode.Decompress);
+            }
+            else if(ce == "br")
+            {
+                return new BrotliStream(stream, CompressionMode.Decompress);
+            }
+            else
+            {
+                Console.WriteLine($"使用了不支持的编码{ce}");
+
+                return stream;
+
+            }
+        }
+
+
+        static void F记录内容(IApplicationBuilder app)
+        {
+            var saveBasePath = AppDomain.CurrentDomain.BaseDirectory;
+
+            saveBasePath = Path.Combine(saveBasePath, "File");
+
+            Directory.CreateDirectory(saveBasePath);
+
+            app.Use((content, next) =>
+            {
+
+                content.Request.Headers.Remove("Accept-Encoding");
+
+                content.Request.Headers.Add("Accept-Encoding", "gzip, deflate, br");
+
+
+                var fileName = Path.Combine(saveBasePath, Path.GetRandomFileName() + ".txt");
+
+                Stream initStream = new MemoryStream();
+
+                content.Response.Body = new SaveFileStream(initStream, content.Response.Body);
+
+                content.Response.OnCompleted(async () =>
+                {
+                    initStream.Position = 0;
+
+                    initStream = Create解压缩流(initStream, content.Response);
+
+                    var fileStream = new FileStream(fileName, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
+
+                    try
+                    {
+                        await initStream.CopyToAsync(fileStream);
+                    }
+                    finally
+                    {
+                        fileStream.Close();
+                    }
+
+                });
+
+                return next();
+            });
+        }
+
+      
         private class CustomTransformer : HttpTransformer
         {
-            /// <summary>
-            /// A callback that is invoked prior to sending the proxied request. All HttpRequestMessage
-            /// fields are initialized except RequestUri, which will be initialized after the
-            /// callback if no value is provided. The string parameter represents the destination
-            /// URI prefix that should be used when constructing the RequestUri. The headers
-            /// are copied by the base implementation, excluding some protocol headers like HTTP/2
-            /// pseudo headers (":authority").
-            /// </summary>
-            /// <param name="httpContext">The incoming request.</param>
-            /// <param name="proxyRequest">The outgoing proxy request.</param>
-            /// <param name="destinationPrefix">The uri prefix for the selected destination server which can be used to create
-            /// the RequestUri.</param>
+            
             public override async ValueTask TransformRequestAsync(HttpContext httpContext, HttpRequestMessage proxyRequest, string destinationPrefix)
-            {
-                
-
-                // Copy all request headers
+            {        
                 await base.TransformRequestAsync(httpContext, proxyRequest, destinationPrefix);
 
-
-                // Assign the custom uri. Be careful about extra slashes when concatenating here. RequestUtilities.MakeDestinationAddress is a safe default.
-                //proxyRequest.RequestUri = RequestUtilities.MakeDestinationAddress("https://"+ httpContext.Request.Host, httpContext.Request.Path, httpContext.Request.QueryString);
-
-                // Suppress the original request header, use the one from the destination Uri.
                 proxyRequest.Headers.Host = null;
             }
         }
